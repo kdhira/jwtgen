@@ -4,7 +4,7 @@ Simple RESTful application to issue and verify RSA-signed JWTs
 
 ## Usage
 
-The keystore `jwtgen.jks` in the current directory will be used.
+The keystore `jwtgen.jks` in the current directory will be used. `signKey` variables in the requests below map to aliases in this keystore
 
 ### POST `/jwt/issue`
 
