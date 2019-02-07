@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+import com.kdhira.jwtgen.json.Error;
 import com.kdhira.jwtgen.json.JWTInfo;
 import com.kdhira.jwtgen.json.JWTToken;
 import com.kdhira.jwtgen.json.JWTInfo.JWTIssueRequest;
@@ -45,7 +46,7 @@ public class JWTGeneratorController {
             jwtToken.setJwt(jwt);
             return ResponseEntity.ok(jwtToken);
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new Error(e.getMessage()));
         }
     }
 
@@ -64,7 +65,7 @@ public class JWTGeneratorController {
             throw new Exception("Invalid key or password");
         }
         catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new Error(e.getMessage()));
         }
     }
 
