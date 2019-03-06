@@ -19,6 +19,7 @@ Request body example:
         "sub": "Kevin.Hira",
         "iss": "JWTGen"
     },
+    "keystore": "jwtgen.jks",
     "signKey": "mykey",
     "password": "keystorepassword",
     "ttl": 86400000
@@ -42,6 +43,7 @@ Request body example:
 ```json
 {
     "jwt": "<jwt token>",
+    "keystore": "jwtgen.jks",
     "signKey": "mykey",
     "password": "keystorepassword"
 }

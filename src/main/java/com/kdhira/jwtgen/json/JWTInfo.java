@@ -26,9 +26,24 @@ public class JWTInfo {
 
     public static class JWTIssueRequest extends JWTInfo {
 
+        private String keystore;
         private String signKey;
         private String password;
         private Long ttl;
+
+        /**
+         * @return the keystore
+         */
+        public String getKeystore() {
+            return keystore;
+        }
+
+        /**
+         * @param keystore the keystore to set
+         */
+        public void setKeystore(String keystore) {
+            this.keystore = keystore;
+        }
 
         /**
          * @return the ttl

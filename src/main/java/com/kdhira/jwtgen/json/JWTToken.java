@@ -24,8 +24,23 @@ public class JWTToken {
 
     public static class JWTVerifyRequest extends JWTToken {
 
+        private String keystore;
         private String signKey;
         private String password;
+
+        /**
+         * @return the keystore
+         */
+        public String getKeystore() {
+            return keystore;
+        }
+
+        /**
+         * @param keystore the keystore to set
+         */
+        public void setKeystore(String keystore) {
+            this.keystore = keystore;
+        }
 
         /**
          * @return the password

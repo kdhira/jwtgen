@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+import com.kdhira.jwtgen.config.JWTGenConfig;
 import com.kdhira.jwtgen.json.Error;
 import com.kdhira.jwtgen.json.JWTInfo;
 import com.kdhira.jwtgen.json.JWTToken;
@@ -15,6 +16,7 @@ import com.kdhira.jwtgen.json.JWTInfo.JWTIssueRequest;
 import com.kdhira.jwtgen.json.JWTToken.JWTVerifyRequest;
 import com.kdhira.jwtgen.keystore.Keystore;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,8 +31,11 @@ import io.jsonwebtoken.SignatureAlgorithm;
 
 
 @RestController
-@RequestMapping("/jwt")
+@RequestMapping("/jwtgen/jwt")
 public class JWTGeneratorController {
+
+    @Autowired
+    JWTGenConfig config;
 
     private static final String KEYSTORE = "jwtgen.jks";
 
@@ -40,8 +45,9 @@ public class JWTGeneratorController {
         try {
             String signKey = Optional.ofNullable(request.getSignKey()).orElseThrow(() -> new Exception("signKey required"));
             Long ttl = Optional.ofNullable(request.getTTL()).orElse(86400000L);
+            String keystoreName = Optional.ofNullable(request.getKeystore()).orElse(KEYSTORE);
 
-            String jwt = createToken(request.getPayload(), getPrivateKey(signKey, request.getPassword()), ttl);
+            String jwt = createToken(request.getPayload(), getPrivateKey(keystoreName, request.getPassword(), signKey), ttl);
             JWTToken jwtToken = new JWTToken();
             jwtToken.setJwt(jwt);
             return ResponseEntity.ok(jwtToken);
@@ -55,8 +61,9 @@ public class JWTGeneratorController {
 
         try {
             String signKey = Optional.ofNullable(request.getSignKey()).orElseThrow(() -> new Exception("signKey required"));
+            String keystoreName = Optional.ofNullable(request.getKeystore()).orElse(KEYSTORE);
 
-            Jws<Claims> claimsJws = Jwts.parser().setSigningKey(getPublicKey(signKey, request.getPassword())).parseClaimsJws(request.getJwt());
+            Jws<Claims> claimsJws = Jwts.parser().setSigningKey(getPublicKey(keystoreName, request.getPassword(), signKey)).parseClaimsJws(request.getJwt());
             if (claimsJws != null) {
                 JWTInfo jwtInfo = new JWTInfo();
                 jwtInfo.setPayload(buildPayload(claimsJws));
@@ -91,11 +98,16 @@ public class JWTGeneratorController {
                 .compact();
     }
 
-    private PrivateKey getPrivateKey(String keyAlias, String password) throws Exception {
-        return new Keystore(new File(KEYSTORE), password).getPrivateKeys().get(keyAlias);
+    private PrivateKey getPrivateKey(String keystoreName, String password, String keyAlias) throws Exception {
+        // return new Keystore(new File(KEYSTORE), password).getPrivateKeys().get(keyAlias);
+        return getKeystore(keystoreName, password).getPrivateKeys().get(keyAlias);
     }
 
-    private PublicKey getPublicKey(String keyAlias, String password) throws Exception {
-        return new Keystore(new File(KEYSTORE), password).getPublicKeys().get(keyAlias);
+    private PublicKey getPublicKey(String keystoreName, String password, String keyAlias) throws Exception {
+        return getKeystore(keystoreName, password).getPublicKeys().get(keyAlias);
+    }
+
+    private Keystore getKeystore(String keystoreName, String password) throws Exception {
+        return new Keystore(new File(config.getKeystoreLocation() + "/" + keystoreName), password);
     }
 }

@@ -4,3 +4,5 @@ spring:
 server:
     port: ${JWTGEN_PORT:9080}
     contextPath: ${JWTGEN_CONTEXT_PATH:}
+jwtgen:
+    keystoreLocation: ${JWTGEN_KEYSTORE_LOCATION:}

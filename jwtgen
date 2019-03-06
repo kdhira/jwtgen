@@ -1,60 +1,195 @@
-#!/bin/sh
+#!/bin/bash
 
-APP_NAME="jwtgen"
-VERSION="0.1.0"
-WORK_DIR="/opt/$APP_NAME"
-RUNAS=vagrant
-SCRIPT="cd /opt/$APP_NAME && java -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:+CMSClassUnloadingEnabled -Xmx50m -jar $APP_NAME-$VERSION.jar"
-SCRIPT="java -XX:+UseConcMarkSweepGC -XX:+UseParNewGC -XX:+CMSClassUnloadingEnabled -Xmx50m --Duser.dir $WORK_DIR -jar $APP_NAME-$VERSION.jar"
+APP_NAME=${APP_NAME:-"jwtgen"}
 
+# SET UP LOGIC
+{
+    set -e
 
+    # Deploy variables
+    INSTALL_PATH=${INSTALL_PATH:-"/opt/$APP_NAME"}
+    SOURCE_PATH=${SOURCE_PATH:-"."}
+    ARTIFACT_DIR=${ARTIFACT_DIR:-"artifacts"}
 
-PIDFILE="/var/run/$APP_NAME.pid"
-LOGFILE="/var/log/$APP_NAME/service.log"
+    # Import deployment/environment variables from file if specified
+    if [ -f "$1" ] && [ ! -z "$2" ]; then
+        . "$1"
+        shift
+    fi
 
-start() {
-  if [ -f /var/run/$PIDNAME ] && kill -0 $(cat /var/run/$PIDNAME); then
-    echo 'Service already running' >&2
-    return 1
-  fi
-  echo 'Starting service…' >&2
-  local CMD="$SCRIPT &> \"$LOGFILE\" & echo \$!"
-  su -c "$CMD" $RUNAS > "$PIDFILE"
-  echo 'Service started' >&2
+    # temp directory
+    TMP_DIR="/tmp/$APP_NAME-deploy"
+
+}
+#############################################################################################
+# SET UP LOGIC ABOVE - DO NOT MODIFY
+
+# DEPLOYMENT CONFIG BELOW - MODIFIABLE
+#############################################################################################
+
+# Application Constants
+LATEST_VERSION='0.2.0'
+VERSION=${VERSION:-$LATEST_VERSION}
+
+SERVICE_NAME=${SERVICE_NAME:-$APP_NAME}
+RUNAS=${RUNAS:-$USER}
+
+# Environment Build
+function service_env {
+    ## Use write_env to build env file
+    add_to_env JWTGEN_PORT ${JWTGEN_PORT:-9080}
+    add_to_env JWTGEN_CONTEXT_PATH ${JWTGEN_CONTEXT_PATH}
+    add_to_env JWTGEN_KEYSTORE_LOCATION ${JWTGEN_KEYSTORE_LOCATION:-"$INSTALL_PATH/keystores"}
 }
 
-stop() {
-  if [ ! -f "$PIDFILE" ] || ! kill -0 $(cat "$PIDFILE"); then
-    echo 'Service not running' >&2
-    return 1
-  fi
-  echo 'Stopping service…' >&2
-  kill -15 $(cat "$PIDFILE") && rm -f "$PIDFILE"
-  echo 'Service stopped' >&2
+function usage {
+    echo "Usage:"
+    echo -e "\t$0 [env] package"
+    echo -e "\t$0 [env] upload [server1[,server2,[...]]]"
+    echo -e "\t$0 [env] install"
+
 }
 
-status() {
-  if [ -f "$PIDFILE" ] || kill -0 $(cat "$PIDFILE"); then
-    echo "Service $APP_NAME is running" >&2
-  else
-    echo "Service $APP_NAME is not running" >&2
-  fi
+function install {
+    if [[ "$EUID" -ne 0 ]]; then
+        echo "$0 should be run as sudo" >&2
+        return 1
+    fi
+
+    mkdir -p "$INSTALL_PATH"
+
+    if [ ! -f "$SOURCE_PATH/$APP_NAME-$VERSION.tar.gz" ]; then
+        echo "Artifact '$SOURCE_PATH/$APP_NAME-$VERSION.tar.gz' does not exist" >&2
+        return 1
+    else
+        echo "Unpacking $SOURCE_PATH/$APP_NAME-$VERSION.tar.gz"
+        mkdir -p "$TMP_DIR"
+        rm -rf "$TMP_DIR/*"
+        tar -C "$TMP_DIR" -xzf $SOURCE_PATH/$APP_NAME-$VERSION.tar.gz
+    fi
+
+    service $SERVICE_NAME stop &> /dev/null || true
+    echo "Installing $SERVICE_NAME to $INSTALL_PATH"
+
+    write_env "$INSTALL_PATH/env" service_env
+
+    template_var jwtgen_service APP_NAME $APP_NAME
+    template_var jwtgen_service VERSION $VERSION
+    template_var jwtgen_service INSTALL_PATH $INSTALL_PATH
+    template_var jwtgen_service RUNAS $RUNAS
+    deploy_file jwtgen_service /etc/init.d/$APP_NAME
+
+    deploy_file "$APP_NAME-$VERSION.jar" "$INSTALL_PATH/$APP_NAME-$VERSION.jar"
+
+    mkdir -p "$INSTALL_PATH/keystores"
+    deploy_file 'keystores' "$INSTALL_PATH/"
+
+    own_file $RUNAS "$INSTALL_PATH"
+
+    service $SERVICE_NAME start
 }
 
-case "$1" in
-  start)
-    start
-    ;;
-  stop)
-    stop
-    ;;
-  status)
-    status
-    ;;
-  restart)
-    stop
-    start
-    ;;
-  *)
-    echo "Usage: $0 {start|stop|restart|status}"
+function package {
+    ARTIFACT_NAME="$APP_NAME-$VERSION.tar.gz"
+    echo "Packaging artifact '$ARTIFACT_NAME' (to $ARTIFACT_DIR/)"
+    mkdir -p $ARTIFACT_DIR
+    tar cvzf "$ARTIFACT_DIR/$ARTIFACT_NAME" \
+        jwtgen_service \
+        keystores \
+        -C build/libs $APP_NAME-$VERSION.jar
+    echo "Created artifact $ARTIFACT_NAME"
+}
+
+function upload {
+    ARTIFACT_NAME="$APP_NAME-$VERSION.tar.gz"
+    if [ ! -f "$ARTIFACT_DIR/$ARTIFACT_NAME" ]; then
+        echo "$ARTIFACT_NAME not found (looking in $ARTIFACT_DIR/)"
+        return 1
+    fi
+    if [ -z "$1" ]; then
+        echo "No host(s) specified"
+        return 0
+    fi
+    for host in "$@"; do
+        echo "Uploading $ARTIFACT_NAME to $host"
+        scp "$ARTIFACT_DIR/$ARTIFACT_NAME" $APP_NAME $host:
+    done
+}
+
+
+#############################################################################################
+# DEPLOYMENT CONFIG ABOVE - MODIFIABLE
+
+# DEPLOYMENT LOGIC BELOW - DO NOT MODIFY
+#############################################################################################
+
+# ACTIONS
+{
+    function write_env {
+        ENV_FILE=$1
+        ENV_BUILD_FUNCTION=$2
+        echo "Writing env '$ENV_FILE'"
+        echo '#!/bin/sh' > "$ENV_FILE"
+        function add_to_env {
+            echo -e "  Adding '$1' to env"
+            echo "export $1=\"$2\"" >> "$ENV_FILE"
+        }
+        $ENV_BUILD_FUNCTION
+        echo "Finished writing env"
+    }
+
+
+    function tmp_file_in {
+        echo "Checking in '$SOURCE_PATH/$1'"
+        cp -rf "$SOURCE_PATH/$1" "$TMP_DIR/$2"
+    }
+
+    function tmp_file_out {
+        echo "Checking out '$1' -> '$2'"
+        cp -rf "$TMP_DIR/$1" "$2"
+    }
+
+    function template_var {
+        echo "Filling variable '$2' in '$1'"
+        val="${3//\//\\/}"
+        sed -i'.sed' -e "s/\$$2/$val/g" "$TMP_DIR/$1"
+    }
+
+    function deploy_file {
+        echo "Copying file: '$1' -> '$2'"
+        cp -rf "$TMP_DIR/$1" "$2"
+    }
+
+    function own_file {
+        chown -R "$1:$1" "$2"
+    }
+}
+
+# EXECUTION
+if [ -z "$1" ]; then
+    usage
+    exit 1
+fi
+base="$1"
+shift
+case "$base" in
+    install)
+        install "$@"
+        exit $?
+        ;;
+    package)
+        package "$@"
+        exit $?
+        ;;
+    upload)
+        upload "$@"
+        exit $?
+        ;;
+    help)
+        usage
+        ;;
+    *)
+        echo "Unknown command '$base'"
+        usage
+        exit 1
 esac
