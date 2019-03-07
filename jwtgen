@@ -1,9 +1,9 @@
 #!/bin/bash
 
-APP_NAME=${APP_NAME:-"jwtgen"}
+APP_NAME=${APP_NAME:-$(basename $0)}
 
-# SET UP LOGIC
-{
+
+{ # SET UP LOGIC
     set -e
 
     # Deploy variables
@@ -20,7 +20,20 @@ APP_NAME=${APP_NAME:-"jwtgen"}
     # temp directory
     TMP_DIR="/tmp/$APP_NAME-deploy"
 
+    VALID_OPERATIONS=()
+
+    function usage {
+        if [[ "${#VALID_OPERATIONS[@]}" -eq 0 ]]; then
+            return 0
+        fi
+        echo "Usage:"
+        for op in "${VALID_OPERATIONS[@]}"; do
+            echo -e "\t$0 [env] $op"
+        done
+    }
+
 }
+
 #############################################################################################
 # SET UP LOGIC ABOVE - DO NOT MODIFY
 
@@ -34,6 +47,12 @@ VERSION=${VERSION:-$LATEST_VERSION}
 SERVICE_NAME=${SERVICE_NAME:-$APP_NAME}
 RUNAS=${RUNAS:-$USER}
 
+VALID_OPERATIONS=(
+    "package"
+    "upload {hosts...}"
+    "install"
+)
+
 # Environment Build
 function service_env {
     ## Use write_env to build env file
@@ -42,19 +61,8 @@ function service_env {
     add_to_env JWTGEN_KEYSTORE_LOCATION ${JWTGEN_KEYSTORE_LOCATION:-"$INSTALL_PATH/keystores"}
 }
 
-function usage {
-    echo "Usage:"
-    echo -e "\t$0 [env] package"
-    echo -e "\t$0 [env] upload [server1[,server2,[...]]]"
-    echo -e "\t$0 [env] install"
-
-}
-
 function install {
-    if [[ "$EUID" -ne 0 ]]; then
-        echo "$0 should be run as sudo" >&2
-        return 1
-    fi
+    require_sudo || return 1
 
     mkdir -p "$INSTALL_PATH"
 
@@ -111,8 +119,11 @@ function upload {
         return 0
     fi
     for host in "$@"; do
+        if [[ "$host" != *:* ]]; then
+            host="$host:"
+        fi
         echo "Uploading $ARTIFACT_NAME to $host"
-        scp "$ARTIFACT_DIR/$ARTIFACT_NAME" $APP_NAME $host:
+        scp "$ARTIFACT_DIR/$ARTIFACT_NAME" $0 $host
     done
 }
 
@@ -123,8 +134,7 @@ function upload {
 # DEPLOYMENT LOGIC BELOW - DO NOT MODIFY
 #############################################################################################
 
-# ACTIONS
-{
+{ # ACTIONS
     function write_env {
         ENV_FILE=$1
         ENV_BUILD_FUNCTION=$2
@@ -136,17 +146,6 @@ function upload {
         }
         $ENV_BUILD_FUNCTION
         echo "Finished writing env"
-    }
-
-
-    function tmp_file_in {
-        echo "Checking in '$SOURCE_PATH/$1'"
-        cp -rf "$SOURCE_PATH/$1" "$TMP_DIR/$2"
-    }
-
-    function tmp_file_out {
-        echo "Checking out '$1' -> '$2'"
-        cp -rf "$TMP_DIR/$1" "$2"
     }
 
     function template_var {
@@ -163,33 +162,43 @@ function upload {
     function own_file {
         chown -R "$1:$1" "$2"
     }
+
+    function require_sudo {
+        if [[ "$EUID" -ne 0 ]]; then
+            echo "$0 should be run as sudo" >&2
+            return 1
+        fi
+    }
 }
 
-# EXECUTION
-if [ -z "$1" ]; then
-    usage
-    exit 1
-fi
-base="$1"
-shift
-case "$base" in
-    install)
-        install "$@"
-        exit $?
-        ;;
-    package)
-        package "$@"
-        exit $?
-        ;;
-    upload)
-        upload "$@"
-        exit $?
-        ;;
-    help)
-        usage
-        ;;
-    *)
-        echo "Unknown command '$base'"
-        usage
-        exit 1
-esac
+
+{ # EXECUTION
+    function main {
+        if [ -z "$1" ]; then
+            usage
+            exit 1
+        fi
+        base="$1"
+        shift
+        for op in "${VALID_OPERATIONS[@]}"; do
+            op=(${op[@]})
+            if [[ "$base" == "${op[0]}" ]]; then
+                $base "$@"
+                exit $?
+            fi
+        done
+        case "$base" in
+            help)
+                usage
+                exit $?
+                ;;
+            *)
+                echo "Unknown command '$base'"
+                usage
+                exit 1
+                ;;
+        esac
+    }
+}
+
+main "$@"
