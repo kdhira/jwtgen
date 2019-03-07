@@ -6,10 +6,15 @@ APP_NAME=${APP_NAME:-$(basename $0)}
 { # SET UP LOGIC
     set -e
 
+    VALID_OPERATIONS=()
+
     # Deploy variables
     INSTALL_PATH=${INSTALL_PATH:-"/opt/$APP_NAME"}
     SOURCE_PATH=${SOURCE_PATH:-"."}
     ARTIFACT_DIR=${ARTIFACT_DIR:-"artifacts"}
+
+    # Temp directory
+    TMP_DIR="/tmp/$APP_NAME-deploy"
 
     # Import deployment/environment variables from file if specified
     if [ -f "$1" ] && [ ! -z "$2" ]; then
@@ -17,11 +22,51 @@ APP_NAME=${APP_NAME:-$(basename $0)}
         shift
     fi
 
-    # temp directory
-    TMP_DIR="/tmp/$APP_NAME-deploy"
+}
 
-    VALID_OPERATIONS=()
+{ # ACTIONS
+    function write_env {
+        ENV_FILE=$1
+        ENV_BUILD_FUNCTION=$2
+        echo "Writing env '$ENV_FILE'"
+        echo '#!/bin/sh' > "$ENV_FILE"
+        function add_to_env {
+            echo -e "  Adding '$1' to env"
+            echo "export $1=\"$2\"" >> "$ENV_FILE"
+        }
+        $ENV_BUILD_FUNCTION
+        echo "Finished writing env"
+    }
 
+    function template_var {
+        echo "Filling variable '$2' in '$1'"
+        val="${3//\//\\/}"
+        sed -i'.sed' -e "s/\$$2/$val/g" "$TMP_DIR/$1"
+    }
+
+    function deploy_file {
+        echo "Copying file: '$1' -> '$2'"
+        cp -rf "$TMP_DIR/$1" "$2"
+    }
+
+    function deploy_file_sensitive {
+        echo "Copying file: '$1' -> '$2'"
+        cp -ri "$TMP_DIR/$1" "$2"
+    }
+
+    function own_file {
+        chown -R "$1:$1" "$2"
+    }
+
+    function require_sudo {
+        if [[ "$EUID" -ne 0 ]]; then
+            echo "$0 should be run as sudo" >&2
+            return 1
+        fi
+    }
+}
+
+{ # EXECUTION
     function usage {
         if [[ "${#VALID_OPERATIONS[@]}" -eq 0 ]]; then
             return 0
@@ -31,7 +76,32 @@ APP_NAME=${APP_NAME:-$(basename $0)}
             echo -e "\t$0 [env] $op"
         done
     }
-
+    function main {
+        if [ -z "$1" ]; then
+            usage
+            exit 1
+        fi
+        base="$1"
+        shift
+        for op in "${VALID_OPERATIONS[@]}"; do
+            op=(${op[@]})
+            if [[ "$base" == "${op[0]}" ]]; then
+                op_$base "$@"
+                exit $?
+            fi
+        done
+        case "$base" in
+            help)
+                usage
+                exit $?
+                ;;
+            *)
+                echo "Unknown command '$base'"
+                usage
+                exit 1
+                ;;
+        esac
+    }
 }
 
 #############################################################################################
@@ -61,7 +131,7 @@ function service_env {
     add_to_env JWTGEN_KEYSTORE_LOCATION ${JWTGEN_KEYSTORE_LOCATION:-"$INSTALL_PATH/keystores"}
 }
 
-function install {
+function op_install {
     require_sudo || return 1
 
     mkdir -p "$INSTALL_PATH"
@@ -90,14 +160,14 @@ function install {
     deploy_file "$APP_NAME-$VERSION.jar" "$INSTALL_PATH/$APP_NAME-$VERSION.jar"
 
     mkdir -p "$INSTALL_PATH/keystores"
-    deploy_file 'keystores' "$INSTALL_PATH/"
+    deploy_file_sensitive 'keystores' "$INSTALL_PATH/"
 
     own_file $RUNAS "$INSTALL_PATH"
 
     service $SERVICE_NAME start
 }
 
-function package {
+function op_package {
     ARTIFACT_NAME="$APP_NAME-$VERSION.tar.gz"
     echo "Packaging artifact '$ARTIFACT_NAME' (to $ARTIFACT_DIR/)"
     mkdir -p $ARTIFACT_DIR
@@ -108,7 +178,7 @@ function package {
     echo "Created artifact $ARTIFACT_NAME"
 }
 
-function upload {
+function op_upload {
     ARTIFACT_NAME="$APP_NAME-$VERSION.tar.gz"
     if [ ! -f "$ARTIFACT_DIR/$ARTIFACT_NAME" ]; then
         echo "$ARTIFACT_NAME not found (looking in $ARTIFACT_DIR/)"
@@ -128,77 +198,5 @@ function upload {
 }
 
 
-#############################################################################################
-# DEPLOYMENT CONFIG ABOVE - MODIFIABLE
-
-# DEPLOYMENT LOGIC BELOW - DO NOT MODIFY
-#############################################################################################
-
-{ # ACTIONS
-    function write_env {
-        ENV_FILE=$1
-        ENV_BUILD_FUNCTION=$2
-        echo "Writing env '$ENV_FILE'"
-        echo '#!/bin/sh' > "$ENV_FILE"
-        function add_to_env {
-            echo -e "  Adding '$1' to env"
-            echo "export $1=\"$2\"" >> "$ENV_FILE"
-        }
-        $ENV_BUILD_FUNCTION
-        echo "Finished writing env"
-    }
-
-    function template_var {
-        echo "Filling variable '$2' in '$1'"
-        val="${3//\//\\/}"
-        sed -i'.sed' -e "s/\$$2/$val/g" "$TMP_DIR/$1"
-    }
-
-    function deploy_file {
-        echo "Copying file: '$1' -> '$2'"
-        cp -rf "$TMP_DIR/$1" "$2"
-    }
-
-    function own_file {
-        chown -R "$1:$1" "$2"
-    }
-
-    function require_sudo {
-        if [[ "$EUID" -ne 0 ]]; then
-            echo "$0 should be run as sudo" >&2
-            return 1
-        fi
-    }
-}
-
-
-{ # EXECUTION
-    function main {
-        if [ -z "$1" ]; then
-            usage
-            exit 1
-        fi
-        base="$1"
-        shift
-        for op in "${VALID_OPERATIONS[@]}"; do
-            op=(${op[@]})
-            if [[ "$base" == "${op[0]}" ]]; then
-                $base "$@"
-                exit $?
-            fi
-        done
-        case "$base" in
-            help)
-                usage
-                exit $?
-                ;;
-            *)
-                echo "Unknown command '$base'"
-                usage
-                exit 1
-                ;;
-        esac
-    }
-}
-
+# Execute main function
 main "$@"
